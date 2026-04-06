@@ -1,0 +1,12 @@
+[project]
+name = "pointnuker_sor"
+version = "1.0.0"
+description = "Statistical Outlier Removal for 3DGS point clouds, extracted from PointNuker"
+authors = [{name = "PointNuker / LichtFeld Plugin Port"}]
+dependencies = ["open3d", "numpy"]
+
+[tool.lichtfeld]
+hot_reload = true
+plugin_api = ">=1,<2"
+lichtfeld_version = ">=0.4.2"
+required_features = []
