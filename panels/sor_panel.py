@@ -39,6 +39,7 @@ class SORPanel(lf.ui.Panel):
         self._nb_neighbors: int = _NB_DEFAULT
         self._std_ratio: float = _STD_DEFAULT
         self._last_result: str = ""
+        self._merge_name: str = "merged"
 
     # ------------------------------------------------------------------
     @classmethod
@@ -103,6 +104,14 @@ class SORPanel(lf.ui.Panel):
         # ---- Restore button ----
         if ui.button("Restore Deleted Gaussians"):
             self._restore_all()
+
+        ui.separator()
+
+        # ---- Merge visible nodes ----
+        ui.label("Merge Visible Nodes")
+        _, self._merge_name = ui.input_text("##merge_name", self._merge_name)
+        if ui.button_styled("Merge Visible Nodes", "primary"):
+            self._merge_visible()
 
         # ---- Status line ----
         if self._last_result:
@@ -189,6 +198,34 @@ class SORPanel(lf.ui.Panel):
         self._last_result = (
             f"Removed {total_removed:,} / {total_initial:,} gaussians "
             f"({pct:.1f}%) - {remaining:,} remaining, outliers in new node"
+        )
+
+    # ------------------------------------------------------------------
+    def _merge_visible(self) -> None:
+        """Merge all visible splat nodes into a single new node."""
+        scene = lf.get_scene()
+        if scene is None:
+            self._last_result = "No scene loaded."
+            return
+
+        nodes = [
+            n for n in scene.get_visible_nodes()
+            if n.splat_data() is not None
+        ]
+        if not nodes:
+            self._last_result = "No visible splat nodes to merge."
+            return
+
+        name = self._merge_name.strip() or "merged"
+        group_id = scene.add_group(name)
+        for n in nodes:
+            scene.reparent(n.id, group_id)
+
+        scene.merge_group(name)
+        scene.notify_changed()
+
+        self._last_result = (
+            f"Merged {len(nodes)} node(s) into '{name}'."
         )
 
     # ------------------------------------------------------------------
