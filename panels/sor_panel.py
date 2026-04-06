@@ -70,8 +70,8 @@ class SORPanel(lf.ui.Panel):
             "##std", self._std_ratio, _STD_MIN, _STD_MAX
         )
         ui.text_disabled(
-            "  Points beyond std_ratio × σ of mean distance are removed.\n"
-            "  Lower = more aggressive. Try 1.0–2.0 for most scenes."
+            "  Points beyond std_ratio x sigma of mean distance are removed.\n"
+            "  Lower = more aggressive. Try 1.0-2.0 for most scenes."
         )
 
         ui.separator()
@@ -111,13 +111,13 @@ class SORPanel(lf.ui.Panel):
 
     # ------------------------------------------------------------------
     def _run_sor(self) -> None:
-        """Run SOR logic directly from the panel."""
+        """Run SOR, soft-delete outliers from original, and move them to a new node."""
         import numpy as np
         import open3d as o3d
 
         scene = lf.get_scene()
         if scene is None:
-            self._last_result = "⚠ No scene loaded."
+            self._last_result = "No scene loaded."
             return
 
         splat_nodes = [
@@ -125,7 +125,7 @@ class SORPanel(lf.ui.Panel):
             if node.splat_data() is not None
         ]
         if not splat_nodes:
-            self._last_result = "⚠ No splat nodes found in scene."
+            self._last_result = "No splat nodes found in scene."
             return
 
         total_removed = 0
@@ -147,17 +147,38 @@ class SORPanel(lf.ui.Panel):
 
             if len(inlier_indices) == 0:
                 self._last_result = (
-                    f"⚠ '{node.name}': SOR would remove ALL points — skipped."
+                    f"'{node.name}': SOR would remove ALL points - skipped."
                 )
                 continue
 
+            # Build masks
             inlier_set = set(inlier_indices)
             outlier_mask_np = np.array(
                 [i not in inlier_set for i in range(n_pts)], dtype=bool
             )
+            outlier_idx = np.where(outlier_mask_np)[0]
             removed = int(outlier_mask_np.sum())
             total_removed += removed
 
+            # Slice each tensor to only the outlier rows and upload to cuda
+            def gather_rows(tensor, idx=outlier_idx):
+                arr = tensor.cpu().numpy()
+                return lf.Tensor.from_numpy(arr[idx]).cuda()
+
+            # Create new splat node containing only the outliers
+            scene.add_splat(
+                f"{node.name}_outliers",
+                gather_rows(sd.means_raw),
+                gather_rows(sd.sh0_raw),
+                gather_rows(sd.shN_raw),
+                gather_rows(sd.scaling_raw),
+                gather_rows(sd.rotation_raw),
+                gather_rows(sd.opacity_raw),
+                sd.active_sh_degree,
+                sd.scene_scale,
+            )
+
+            # Soft-delete outliers from the original node
             outlier_tensor = lf.Tensor.from_numpy(outlier_mask_np).cuda()
             sd.soft_delete(outlier_tensor)
 
@@ -166,8 +187,8 @@ class SORPanel(lf.ui.Panel):
         pct = total_removed / max(total_initial, 1) * 100.0
         remaining = total_initial - total_removed
         self._last_result = (
-            f"✓ Removed {total_removed:,} / {total_initial:,} gaussians "
-            f"({pct:.1f}%) — {remaining:,} remaining"
+            f"Removed {total_removed:,} / {total_initial:,} gaussians "
+            f"({pct:.1f}%) - {remaining:,} remaining, outliers in new node"
         )
 
     # ------------------------------------------------------------------
@@ -175,7 +196,7 @@ class SORPanel(lf.ui.Panel):
         """Clear all soft-deleted gaussians and redraw."""
         scene = lf.get_scene()
         if scene is None:
-            self._last_result = "⚠ No scene loaded."
+            self._last_result = "No scene loaded."
             return
 
         restored = 0
@@ -187,6 +208,6 @@ class SORPanel(lf.ui.Panel):
 
         if restored:
             scene.notify_changed()
-            self._last_result = f"✓ Restored deleted gaussians on {restored} node(s)."
+            self._last_result = f"Restored deleted gaussians on {restored} node(s)."
         else:
             self._last_result = "No splat nodes found."
