@@ -47,21 +47,16 @@ class SORPanel(lf.ui.Panel):
 
     # ------------------------------------------------------------------
     def draw(self, ui) -> None:
+        self._ui = ui
         # ---- Header / description ----
         ui.text_disabled("Port of PointNuker v1.0 SOR (MIT) — GS-safe")
         ui.separator()
 
         # ---- nb_neighbors ----
-        with ui.split(0.45) as row:
-            row.label("Neighbours")
-            self._nb_neighbors = int(
-                ui.int_slider(
-                    "##nb",
-                    self._nb_neighbors,
-                    _NB_MIN,
-                    _NB_MAX,
-                )
-            )
+        ui.label("Neighbours")
+        _, self._nb_neighbors = ui.slider_int(
+            "##nb", self._nb_neighbors, _NB_MIN, _NB_MAX
+        )
         ui.text_disabled(
             "  Neighbours used to compute each point's mean distance.\n"
             "  Higher = more context, slower."
@@ -70,14 +65,10 @@ class SORPanel(lf.ui.Panel):
         ui.separator()
 
         # ---- std_ratio ----
-        with ui.split(0.45) as row:
-            row.label("Std Ratio")
-            self._std_ratio = ui.float_slider(
-                "##std",
-                self._std_ratio,
-                _STD_MIN,
-                _STD_MAX,
-            )
+        ui.label("Std Ratio")
+        _, self._std_ratio = ui.slider_float(
+            "##std", self._std_ratio, _STD_MIN, _STD_MAX
+        )
         ui.text_disabled(
             "  Points beyond std_ratio × σ of mean distance are removed.\n"
             "  Lower = more aggressive. Try 1.0–2.0 for most scenes."
@@ -87,21 +78,21 @@ class SORPanel(lf.ui.Panel):
 
         # ---- Preset buttons ----
         ui.label("Presets")
-        with ui.row() as row:
-            if row.button("Conservative"):
-                self._nb_neighbors = 30
-                self._std_ratio = 2.0
-                self._last_result = "Preset: Conservative (nb=30, std=2.0)"
-
-            if row.button("Balanced"):
-                self._nb_neighbors = 20
-                self._std_ratio = 1.5
-                self._last_result = "Preset: Balanced (nb=20, std=1.5)"
-
-            if row.button("Aggressive"):
-                self._nb_neighbors = 10
-                self._std_ratio = 1.0
-                self._last_result = "Preset: Aggressive (nb=10, std=1.0)"
+        ui.same_line()
+        if ui.button("Conservative"):
+            self._nb_neighbors = 30
+            self._std_ratio = 2.0
+            self._last_result = "Preset: Conservative (nb=30, std=2.0)"
+        ui.same_line()
+        if ui.button("Balanced"):
+            self._nb_neighbors = 20
+            self._std_ratio = 1.5
+            self._last_result = "Preset: Balanced (nb=20, std=1.5)"
+        ui.same_line()
+        if ui.button("Aggressive"):
+            self._nb_neighbors = 10
+            self._std_ratio = 1.0
+            self._last_result = "Preset: Aggressive (nb=10, std=1.0)"
 
         ui.separator()
 
@@ -120,19 +111,64 @@ class SORPanel(lf.ui.Panel):
 
     # ------------------------------------------------------------------
     def _run_sor(self) -> None:
-        """Invoke SOROperator with current panel parameters."""
-        op = lf.ops.call(
-            "pointnuker_sor.sor_operator",
-            nb_neighbors=self._nb_neighbors,
-            std_ratio=self._std_ratio,
-        )
-        if op and op.get("status") == "FINISHED":
-            self._last_result = (
-                f"✓ SOR complete  (nb={self._nb_neighbors}, "
-                f"std={self._std_ratio:.2f})"
+        """Run SOR logic directly from the panel."""
+        import numpy as np
+        import open3d as o3d
+
+        scene = lf.get_scene()
+        if scene is None:
+            self._last_result = "⚠ No scene loaded."
+            return
+
+        splat_nodes = [
+            node for node in scene.get_nodes()
+            if node.splat_data() is not None
+        ]
+        if not splat_nodes:
+            self._last_result = "⚠ No splat nodes found in scene."
+            return
+
+        total_removed = 0
+        total_initial = 0
+
+        for node in splat_nodes:
+            sd = node.splat_data()
+            n_pts = sd.num_points
+            total_initial += n_pts
+
+            means_np = sd.means_raw.cpu().numpy()
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(means_np.astype(np.float64))
+
+            pcd_clean, inlier_indices = pcd.remove_statistical_outlier(
+                nb_neighbors=int(self._nb_neighbors),
+                std_ratio=float(self._std_ratio),
             )
-        else:
-            self._last_result = "⚠ SOR skipped or failed — check the log."
+
+            if len(inlier_indices) == 0:
+                self._last_result = (
+                    f"⚠ '{node.name}': SOR would remove ALL points — skipped."
+                )
+                continue
+
+            inlier_set = set(inlier_indices)
+            outlier_mask_np = np.array(
+                [i not in inlier_set for i in range(n_pts)], dtype=bool
+            )
+            removed = int(outlier_mask_np.sum())
+            total_removed += removed
+
+            outlier_tensor = lf.Tensor.from_numpy(outlier_mask_np).cuda()
+            sd.soft_delete(outlier_tensor)
+
+        scene.notify_changed()
+
+        pct = total_removed / max(total_initial, 1) * 100.0
+        remaining = total_initial - total_removed
+        self._last_result = (
+            f"✓ Removed {total_removed:,} / {total_initial:,} gaussians "
+            f"({pct:.1f}%) — {remaining:,} remaining"
+        )
 
     # ------------------------------------------------------------------
     def _restore_all(self) -> None:

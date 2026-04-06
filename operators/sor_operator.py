@@ -22,6 +22,9 @@ except ImportError as e:
         f"Detail: {e}"
     )
 
+# Shared result state readable by the panel
+last_sor_result: dict = {}
+
 
 class SOROperator(Operator):
     """
@@ -130,7 +133,7 @@ class SOROperator(Operator):
             )
 
             # --- Soft-delete outliers (GS-safe; preserves all attributes) ---
-            outlier_tensor = lf.Tensor(outlier_mask_np).to("cuda")
+            outlier_tensor = lf.Tensor.from_numpy(outlier_mask_np).cuda()
             sd.soft_delete(outlier_tensor)
             total_removed += removed
 
@@ -142,4 +145,11 @@ class SOROperator(Operator):
             f"removed: {total_removed:,} ({pct_total:.2f}%) | "
             f"remaining: {total_initial - total_removed:,}"
         )
+        import pointnuker_sor.operators.sor_operator as _self_mod
+        _self_mod.last_sor_result = {
+            "initial": total_initial,
+            "removed": total_removed,
+            "remaining": total_initial - total_removed,
+            "pct": pct_total,
+        }
         return {"FINISHED"}
