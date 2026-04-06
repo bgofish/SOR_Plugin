@@ -8,6 +8,7 @@ panel instance so parameters persist across draws for the session.
 
 from __future__ import annotations
 
+import time
 import lichtfeld as lf
 from lfs_plugins.ui.state import AppState
 
@@ -40,6 +41,9 @@ class SORPanel(lf.ui.Panel):
         self._std_ratio: float = _STD_DEFAULT
         self._last_result: str = ""
         self._merge_name: str = "merged"
+        self._visible_only: bool = True
+        self._processing: bool = False
+        self._processing_start: float = 0.0
 
     # ------------------------------------------------------------------
     @classmethod
@@ -50,7 +54,7 @@ class SORPanel(lf.ui.Panel):
     def draw(self, ui) -> None:
         self._ui = ui
         # ---- Header / description ----
-        ui.text_disabled("Port of PointNuker v1.0 SOR (MIT) — GS-safe")
+        ui.text_disabled("PointNuker SOR (MIT) — V0.1.3")
         ui.separator()
 
         # ---- nb_neighbors ----
@@ -97,19 +101,25 @@ class SORPanel(lf.ui.Panel):
 
         ui.separator()
 
+        # ---- Visible only toggle ----
+        _, self._visible_only = ui.checkbox("Visible nodes only", self._visible_only)
+
+        ui.separator()
+
         # ---- Run button ----
         if ui.button_styled("Run SOR on Scene", "primary"):
             self._run_sor()
 
         # ---- Restore button ----
-        if ui.button("Restore Deleted Gaussians"):
-            self._restore_all()
+
 
         ui.separator()
 
         # ---- Merge visible nodes ----
-        ui.label("Merge Visible Nodes")
+        ui.push_item_width(120)
         _, self._merge_name = ui.input_text("##merge_name", self._merge_name)
+        ui.pop_item_width()
+        ui.same_line()
         if ui.button_styled("Merge Visible Nodes", "primary"):
             self._merge_visible()
 
@@ -124,17 +134,19 @@ class SORPanel(lf.ui.Panel):
         import numpy as np
         import open3d as o3d
 
+        self._last_result = "Running SOR…"
+
         scene = lf.get_scene()
         if scene is None:
             self._last_result = "No scene loaded."
             return
 
-        splat_nodes = [
-            node for node in scene.get_nodes()
-            if node.splat_data() is not None
-        ]
+        candidates = scene.get_visible_nodes() if self._visible_only else scene.get_nodes()
+        splat_nodes = [n for n in candidates if n.splat_data() is not None]
+
         if not splat_nodes:
-            self._last_result = "No splat nodes found in scene."
+            scope = "visible" if self._visible_only else "scene"
+            self._last_result = f"No splat nodes found ({scope})."
             return
 
         total_removed = 0
@@ -187,17 +199,50 @@ class SORPanel(lf.ui.Panel):
                 sd.scene_scale,
             )
 
-            # Soft-delete outliers from the original node
-            outlier_tensor = lf.Tensor.from_numpy(outlier_mask_np).cuda()
-            sd.soft_delete(outlier_tensor)
+            # Replace original node with inlier-only copy so the node tree
+            # count refreshes correctly.
+            # IMPORTANT: remove the original node BEFORE adding the replacement —
+            # if both share the same name, remove_node would delete the new one.
+            inlier_idx = np.where(~outlier_mask_np)[0]
+            def gather_inliers(tensor, idx=inlier_idx):
+                arr = tensor.cpu().numpy()
+                return lf.Tensor.from_numpy(arr[idx]).cuda()
 
+            original_name = node.name
+            # Pre-fetch all inlier tensors while the original node still exists
+            inlier_means    = gather_inliers(sd.means_raw)
+            inlier_sh0      = gather_inliers(sd.sh0_raw)
+            inlier_shN      = gather_inliers(sd.shN_raw)
+            inlier_scaling  = gather_inliers(sd.scaling_raw)
+            inlier_rotation = gather_inliers(sd.rotation_raw)
+            inlier_opacity  = gather_inliers(sd.opacity_raw)
+            active_sh       = sd.active_sh_degree
+            s_scale         = sd.scene_scale
+
+            # Remove original first so the name is free for the replacement
+            scene.remove_node(original_name)
+
+            scene.add_splat(
+                original_name,
+                inlier_means,
+                inlier_sh0,
+                inlier_shN,
+                inlier_scaling,
+                inlier_rotation,
+                inlier_opacity,
+                active_sh,
+                s_scale,
+            )
+
+        scene.invalidate_cache()
         scene.notify_changed()
 
         pct = total_removed / max(total_initial, 1) * 100.0
         remaining = total_initial - total_removed
+        scope = "visible" if self._visible_only else "all"
         self._last_result = (
             f"Removed {total_removed:,} / {total_initial:,} gaussians "
-            f"({pct:.1f}%) - {remaining:,} remaining, outliers in new node"
+            f"({pct:.1f}%) - {remaining:,} remaining [{scope}]"
         )
 
     # ------------------------------------------------------------------
@@ -224,9 +269,7 @@ class SORPanel(lf.ui.Panel):
         scene.merge_group(name)
         scene.notify_changed()
 
-        self._last_result = (
-            f"Merged {len(nodes)} node(s) into '{name}'."
-        )
+        self._last_result = f"Merged {len(nodes)} node(s) into '{name}'."
 
     # ------------------------------------------------------------------
     def _restore_all(self) -> None:
