@@ -119,12 +119,33 @@ class COLMAPPanel(lf.ui.Panel):
             ui.text_disabled(f"  {self._file_info}")
 
         ui.separator()
+        ui.label("Statistical Outlier Removal")
+        ui.separator()
+        
+        # Presets
+        ui.label("Presets")
+        ui.same_line()
+        if ui.button("Conservative"):
+            self._nb_neighbors, self._std_ratio = 30, 2.0
+            self._last_result = "Preset: Conservative (nb=30, std=2.0)"
+        ui.same_line()
+        if ui.button("Balanced"):
+            self._nb_neighbors, self._std_ratio = 20, 1.5
+            self._last_result = "Preset: Balanced (nb=20, std=1.5)"
+        ui.same_line()
+        if ui.button("Aggressive"):
+            self._nb_neighbors, self._std_ratio = 10, 1.0
+            self._last_result = "Preset: Aggressive (nb=10, std=1.0)"
+
+        ui.separator()
+
+
+
 
         # ================================================================
         # SOR parameters
         # ================================================================
-        ui.label("Statistical Outlier Removal")
-        ui.separator()
+
 
         ui.label("Neighbours")
         ui.push_item_width(-1)
@@ -147,33 +168,17 @@ class COLMAPPanel(lf.ui.Panel):
             "  Points beyond std_ratio x sigma are removed.\n"
             "  Lower = more aggressive. Try 1.0-2.0 for most scenes."
         )
-
-        # Presets
-        ui.label("Presets")
-        ui.same_line()
-        if ui.button("Conservative"):
-            self._nb_neighbors, self._std_ratio = 30, 2.0
-            self._last_result = "Preset: Conservative (nb=30, std=2.0)"
-        ui.same_line()
-        if ui.button("Balanced"):
-            self._nb_neighbors, self._std_ratio = 20, 1.5
-            self._last_result = "Preset: Balanced (nb=20, std=1.5)"
-        ui.same_line()
-        if ui.button("Aggressive"):
-            self._nb_neighbors, self._std_ratio = 10, 1.0
-            self._last_result = "Preset: Aggressive (nb=10, std=1.0)"
-
-        ui.separator()
+        ui.separator()       
         if ui.button_styled("Run SOR", "secondary"):
             self._run_sor()
         ui.separator()
-
+        ui.separator()
         # ================================================================
         # Crop parameters
         # ================================================================
-        ui.label("Crop")
-        ui.separator()
-
+        ui.label("Crop Initial Points by Axis Aligned Bounding Box [AABB] or Sphere:")
+        # ui.separator()
+        ui.label(" ")
         # Mode toggle
         ui.label("Mode")
         ui.same_line()
