@@ -1,5 +1,5 @@
 [project]
-name = "pointnuker_sor"
+name = "Pointnuker_SOR"
 version = "0.1.4"
 description = "Statistical Outlier Removal for 3DGS point clouds, extracted from PointNuker"
 authors = [{name = "PointNuker / LichtFeld Plugin Port By bb6"}]
