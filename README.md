@@ -9,11 +9,13 @@ SOR typically uses two primary parameters to determine what stays and what gets 
 For every point in the cloud, the algorithm identifies its nearest neighbours (where k is a user-defined parameter) and computes the average distance from the point to those neighbours
 
 **Neighbours (k):**
+
 Function: Defines the size of the neighborhood to analyze for each point. The tool calculates the average distance from a point to its nearest neighbors. Higher values are slower
 Adjustment: Increase this for denser splats to get a more reliable average; decrease it if the filter is accidentally selecting fine details like thin wires or hair. 
 Allowable Range: 1 to 500
 
 **Std Ratio (nSigma) - Standard Deviation Multiplier Threshold:**
+
 Function: Sets the sensitivity threshold for deletion. Any point whose mean distance to its neighbors is greater than the global mean distance plus times the standard deviation is removed.
 Adjustment: Lower values (e.g., 0.5–0.8) are more aggressive and will remove more floaters; higher values (e.g., 2.0–3.0) are more conservative, keeping points unless they are extremely isolated.
 Allowable Range: 0.01 to 10
