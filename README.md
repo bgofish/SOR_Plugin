@@ -24,6 +24,7 @@ Allowable Range: 0.01 to 10
 Conservative:  k=30  & nSigma= 2.0
 Balanced:      k=20  & nSigma= 1.5
 Aggressive:    k=10  & nSigma= 1.0
+
 [Introduction Video](https://youtu.be/zBRYoCgA9CI)
 
 <img width="2127" height="1404" alt="SOR" src="https://github.com/user-attachments/assets/ec5b5689-f478-46a0-af0f-2b5a2cbb0c8e" />
