@@ -1,5 +1,7 @@
 Based on Code sourced from; [/Dymensium/PointNuker](https://github.com/Dymensium/PointNuker)
 
+[Introduction Video](https://youtu.be/zBRYoCgA9CI)
+
 <img width="2127" height="1404" alt="SOR" src="https://github.com/user-attachments/assets/ec5b5689-f478-46a0-af0f-2b5a2cbb0c8e" />
 
 SOR - [Statistical  Outlier Removal](https://www.google.com/search?sourceid=chrome&aep=42&source=chrome.crn.rb&udm=50&q=SOR+-+Statistical+Outlier+Removal&mstk=AUtExfCaZiZh6kMy4e6evvU3lqDW4R3FYdttLDTlanyoAMulrRJhh9AqQSSl9jfsLJSzNHBCa8I1cKZxxg29LpBky17W-a0kx1ORmBKypXPY6_sTIWx1aIAn1c2HsU5QYGsJ-39OPSlmXzdsnFwTzuTOSqWI6qgOHOiBepAN8z2F3Wmfna0oeGX60Lpbmy2hsGd626Db-_ERzqGVTMWtI6-ahLJ1PYIcNXXE2vx7bqv0WOtW9Z81EACduLZGLs2PM-fhbExsoXEPGZ7L-trVEIVlQiMVKObm-98aayM&csuir=1&mtid=KKblaavcKY2KnesPwdWb8Qc)  - There two parts to the Plugin:   
