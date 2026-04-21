@@ -2,7 +2,7 @@ Based on Code sourced from; [/Dymensium/PointNuker](https://github.com/Dymensium
 
 With PointNuker-SOR, the Statistical Outlier Removal (SOR) filter is a precision tool used to "denoise" your 3D Gaussian Splats by identifying points that are too far from their neighbors compared to the average density of the cloud. 
 
-# **Core SOR Settings**
+# **SOR Settings**
 
 SOR typically uses two primary parameters to determine what stays and what gets "nuked": 
 
