@@ -14,6 +14,18 @@ from __future__ import annotations
 import lichtfeld as lf
 from lfs_plugins.ui.state import AppState
 
+import os
+from pathlib import Path
+
+_SCRIPTS_DIR = Path(__file__).parent.parent   # Pointnuker_SOR/
+_GUI_SCRIPT  = _SCRIPTS_DIR / "scripts/PyVista_ColmapBIN-CRS_Pyside.py"
+
+
+def _run_gui_script_inprocess(script_path: Path) -> None:
+    """Execute the GUI script inside LichtFeld's own Python interpreter."""
+    code = script_path.read_text(encoding="utf-8")
+    exec(compile(code, str(script_path), "exec"), {"__name__": "__main__", "__file__": str(script_path)})
+
 _NB_MIN, _NB_MAX   = 1, 500
 _STD_MIN, _STD_MAX = 0.01, 10.0
 _NB_DEFAULT        = 20
@@ -73,9 +85,18 @@ class COLMAPPanel(lf.ui.Panel):
     # ------------------------------------------------------------------
     def draw(self, ui) -> None:
 
-        ui.text_disabled("Pre-process COLMAP sparse point clouds before training.")
+        # ui.text_disabled("Pre-process COLMAP sparse point clouds before training.")
         ui.separator()
 
+        # ================================================================
+        # Edit COLMAP — launches the external crop / viewer tool
+        # ================================================================
+        if ui.button("Edit COLMAP: Crop/rotate/translate/scale"):
+            self._launch_edit_colmap()
+        ui.separator()           
+        ui.separator()
+        ui.text_disabled("Clean/Crop COLMAP sparse point clouds before training.")
+        ui.separator()
         # ================================================================
         # File picker
         # ================================================================
@@ -235,6 +256,23 @@ class COLMAPPanel(lf.ui.Panel):
         if self._last_result:
             ui.separator()
             ui.label(self._last_result)
+
+    # ==================================================================
+    # Launch external Edit COLMAP tool
+    # ==================================================================
+
+    def _launch_edit_colmap(self) -> None:
+        """Launch the COLMAP Points3D crop/viewer tool using LichtFeld's internal Python."""
+        if not _GUI_SCRIPT.is_file():
+            self._last_result = f"ERROR: Script not found — {_GUI_SCRIPT}"
+            return
+        try:
+            import threading
+            t = threading.Thread(target=_run_gui_script_inprocess, args=(_GUI_SCRIPT,), daemon=True)
+            t.start()
+            self._last_result = "Edit COLMAP tool launched."
+        except Exception as exc:
+            self._last_result = f"Failed to launch Edit COLMAP — {exc}"
 
     # ==================================================================
     # Shared file I/O

@@ -34,6 +34,8 @@ class SORPanel(lf.ui.Panel):
         self._last_result: str   = ""
         self._merge_name: str    = "merged"
         self._visible_only: bool = True
+        self._folder_name: str   = "Group"
+        self._move_target: str   = "Selection"
 
     # ------------------------------------------------------------------
     @classmethod
@@ -99,6 +101,28 @@ class SORPanel(lf.ui.Panel):
         ui.same_line()
         if ui.button_styled("Merge Visible Nodes", "primary"):
             self._merge_visible()
+
+        # New Group Folder
+        ui.separator()
+        ui.label("New Group Folder")
+        ui.push_item_width(120)
+        _, self._folder_name = ui.input_text("##folder_name", self._folder_name)
+        ui.pop_item_width()
+        ui.same_line()
+        if ui.button("Create"):
+            self._create_folder()
+        ui.text_disabled("  Adds an empty folder node to the scene hierarchy.")
+        ui.separator()
+
+        # Move Selected Splats
+        ui.label("Move Selected Splats")
+        ui.push_item_width(120)
+        _, self._move_target = ui.input_text("##move_target", self._move_target)
+        ui.pop_item_width()
+        ui.same_line()
+        if ui.button("Move"):
+            self._move_selected()
+        ui.text_disabled("  Target node name to move selected splats into.")
 
         # Status
         if self._last_result:
@@ -222,6 +246,134 @@ class SORPanel(lf.ui.Panel):
         scene.merge_group(name)
         scene.notify_changed()
         self._last_result = f"Merged {len(nodes)} node(s) into '{name}'."
+
+    # ==================================================================
+    # Create group folder
+    # ==================================================================
+
+    def _create_folder(self) -> None:
+        name = self._folder_name.strip() or "Group"
+        scene = lf.get_scene()
+        if scene is None:
+            self._last_result = "No scene loaded."
+            return
+        try:
+            scene.add_group(name)
+            scene.notify_changed()
+            self._last_result = f"Created group '{name}'."
+        except Exception as e:
+            self._last_result = f"Create group failed: {e}"
+
+    # ==================================================================
+    # Move selected splats
+    # ==================================================================
+
+    def _move_selected(self) -> None:
+        import numpy as np
+
+        target_name = self._move_target.strip()
+        if not target_name:
+            self._last_result = "Enter a target node name first."
+            return
+
+        scene = lf.get_scene()
+        if scene is None:
+            self._last_result = "No scene loaded."
+            return
+
+        global_mask = scene.selection_mask
+        if global_mask is None or not lf.has_selection():
+            self._last_result = "Nothing selected."
+            return
+
+        visible_splat_nodes = [n for n in scene.get_visible_nodes()
+                               if n.splat_data() is not None]
+
+        # Find the source node that owns the current selection
+        start_idx  = 0
+        source_node = None
+        for n in visible_splat_nodes:
+            nd = n.splat_data().num_points
+            local_mask = global_mask[start_idx : start_idx + nd].cpu().numpy().astype(bool)
+            if local_mask.sum() > 0:
+                source_node = n
+                break
+            start_idx += nd
+
+        if source_node is None:
+            self._last_result = "No splats selected in any visible node."
+            return
+
+        source_name = source_node.name
+        num_points  = source_node.splat_data().num_points
+        local_mask  = global_mask[start_idx : start_idx + num_points].cpu().numpy().astype(bool)
+        selected_count = int(local_mask.sum())
+
+        scene.clear_selection()
+
+        source_sd    = source_node.splat_data()
+        selected_idx = np.where(local_mask)[0]
+        inlier_idx   = np.where(~local_mask)[0]
+        active_sh    = source_sd.active_sh_degree
+        s_scale      = source_sd.scene_scale
+
+        def _gather(tensor, idx):
+            return lf.Tensor.from_numpy(tensor.cpu().numpy()[idx]).cuda()
+
+        sel_means    = _gather(source_sd.means_raw,    selected_idx)
+        sel_sh0      = _gather(source_sd.sh0_raw,      selected_idx)
+        sel_shN      = _gather(source_sd.shN_raw,      selected_idx)
+        sel_scaling  = _gather(source_sd.scaling_raw,  selected_idx)
+        sel_rotation = _gather(source_sd.rotation_raw, selected_idx)
+        sel_opacity  = _gather(source_sd.opacity_raw,  selected_idx)
+
+        inlier_means    = _gather(source_sd.means_raw,    inlier_idx)
+        inlier_sh0      = _gather(source_sd.sh0_raw,      inlier_idx)
+        inlier_shN      = _gather(source_sd.shN_raw,      inlier_idx)
+        inlier_scaling  = _gather(source_sd.scaling_raw,  inlier_idx)
+        inlier_rotation = _gather(source_sd.rotation_raw, inlier_idx)
+        inlier_opacity  = _gather(source_sd.opacity_raw,  inlier_idx)
+
+        target_node = scene.get_node(target_name)
+        if target_node is not None:
+            target_sd = target_node.splat_data()
+            def _cat(a, b):
+                return lf.Tensor.from_numpy(
+                    np.concatenate([a.cpu().numpy(), b.cpu().numpy()], axis=0)
+                ).cuda()
+            scene.remove_node(target_name)
+            scene.add_splat(
+                target_name,
+                _cat(target_sd.means_raw,    sel_means),
+                _cat(target_sd.sh0_raw,      sel_sh0),
+                _cat(target_sd.shN_raw,      sel_shN),
+                _cat(target_sd.scaling_raw,  sel_scaling),
+                _cat(target_sd.rotation_raw, sel_rotation),
+                _cat(target_sd.opacity_raw,  sel_opacity),
+                active_sh, s_scale,
+            )
+        else:
+            scene.add_splat(
+                target_name,
+                sel_means, sel_sh0, sel_shN,
+                sel_scaling, sel_rotation, sel_opacity,
+                active_sh, s_scale,
+            )
+
+        scene.remove_node(source_name)
+        scene.add_splat(
+            source_name,
+            inlier_means, inlier_sh0, inlier_shN,
+            inlier_scaling, inlier_rotation, inlier_opacity,
+            active_sh, s_scale,
+        )
+
+        scene.invalidate_cache()
+        scene.notify_changed()
+        self._last_result = (
+            f"Moved {selected_count:,} splats from '{source_name}' → '{target_name}'."
+        )
+        self._move_target = "Selection"
 
     # ==================================================================
     # Restore soft-deleted gaussians
