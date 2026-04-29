@@ -1,4 +1,4 @@
-# "LichtFeld Studio | COLMAP Point Editor v0.2.1"
+# "LichtFeld Studio | COLMAP Point Editor v0.2.0"
 #================================================
 import sys, os, struct, json, subprocess
 import numpy as np
@@ -135,7 +135,7 @@ class COLMAPProject:
 class COLMAPExplorer(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LichtFeld Studio | COLMAP Point Editor v0.2.1")
+        self.setWindowTitle("LichtFeld Studio | COLMAP Point Editor v0.2.0")
         self.resize(1750, 1050); self.proj, self.cloud_poly = None, None
         self.bounds = [0.0]*6; self.current_crop = [0.0]*6; self.bins = None
         self.picked_pts, self.pick_mode = [], None
@@ -436,7 +436,7 @@ class COLMAPExplorer(QMainWindow):
         self.plotter.disable_picking()
         for b in self.pick_btn_map.values(): b.setChecked(False)
         self.pick_btn_map[m].setChecked(True)
-        self.pick_mode = m; self.picked_pts = []; self._normal_flipped = False; self._base_normal = None
+        self.pick_mode = m; self.picked_pts = []
         self._clear_pick_visuals()
         self.plotter.enable_point_picking(callback=self.pick_callback, show_message=True, color='yellow', point_size=12)
 
@@ -453,26 +453,33 @@ class COLMAPExplorer(QMainWindow):
         self.plotter.add_mesh(cloud, name='_pick_pts', color='yellow', point_size=16, render_points_as_spheres=True, reset_camera=False)
 
         if self.pick_mode == 'align' and len(pts) >= 2:
+            # Draw line between 2 points
             line = pv.Line(pts[0], pts[1])
             self.plotter.add_mesh(line, name='_pick_lines', color='cyan', line_width=3, reset_camera=False)
 
         elif self.pick_mode == 'plane' and len(pts) >= 2:
+            # Draw lines connecting picked points so far
             line_pts = []
             for i in range(len(pts) - 1):
                 line_pts += [2, i, i + 1]
             if len(pts) == 3:
-                line_pts += [2, 2, 0]
+                line_pts += [2, 2, 0]  # close triangle
             poly = pv.PolyData(np.array(pts))
             poly.lines = np.array(line_pts)
             self.plotter.add_mesh(poly, name='_pick_lines', color='cyan', line_width=3, reset_camera=False)
 
-            if len(pts) == 3 and hasattr(self, '_base_normal') and self._base_normal is not None:
-                n = self._base_normal if not self._normal_flipped else -self._base_normal
-                centre = (pts[0] + pts[1] + pts[2]) / 3.0
-                arrow_len = np.linalg.norm(pts[1] - pts[0]) * 0.6
-                arrow = pv.Arrow(start=centre, direction=n, scale=arrow_len)
-                color = 'orange' if self._normal_flipped else 'lime'
-                self.plotter.add_mesh(arrow, name='_pick_normal', color=color, reset_camera=False)
+            if len(pts) == 3:
+                # Draw normal arrow
+                p1, p2, p3 = pts
+                n = np.cross(p2 - p1, p3 - p1)
+                n_len = np.linalg.norm(n)
+                if n_len > 1e-9:
+                    n /= n_len
+                    if n[1] < 0: n = -n
+                    centre = (p1 + p2 + p3) / 3.0
+                    arrow_len = np.linalg.norm(p2 - p1) * 0.6
+                    arrow = pv.Arrow(start=centre, direction=n, scale=arrow_len)
+                    self.plotter.add_mesh(arrow, name='_pick_normal', color='lime', reset_camera=False)
 
         self.plotter.render()
 
@@ -499,24 +506,11 @@ class COLMAPExplorer(QMainWindow):
             self.plotter.iren.add_observer("RightButtonPressEvent", self._cancel_pick)
 
         elif self.pick_mode == 'plane' and len(self.picked_pts) == 3:
-            # Compute and store base normal once here
-            p1, p2, p3 = self.picked_pts
-            n = np.cross(p2 - p1, p3 - p1)
-            n_len = np.linalg.norm(n)
-            if n_len > 1e-9:
-                n /= n_len
-                if n[1] < 0: n = -n   # default upward — stored once, never recomputed
-                self._base_normal = n
             self.plotter.disable_picking()
-            self.plotter.add_text("✅ Left-click to confirm  |  [F] Flip normal  |  Right-click to cancel",
+            self.plotter.add_text("✅ Left-click viewport to confirm  |  Right-click to cancel",
                                   name='_pick_msg', position='lower_edge', font_size=10, color='yellow')
             self.plotter.iren.add_observer("LeftButtonPressEvent",  self._confirm_pick)
             self.plotter.iren.add_observer("RightButtonPressEvent", self._cancel_pick)
-            self.plotter.add_key_event('f', self._flip_normal_key)
-
-    def _flip_normal_key(self, obj=None, event=None):
-        self._normal_flipped = not self._normal_flipped
-        self._draw_pick_visuals()
 
     def _confirm_pick(self, obj, event):
         self.plotter.iren.remove_observers("LeftButtonPressEvent")
@@ -530,9 +524,12 @@ class COLMAPExplorer(QMainWindow):
             self.srt_ctrl['RotY'].setValue(self.srt_ctrl['RotY'].value() - ang)
 
         elif self.pick_mode == 'plane' and len(pts) == 3:
-            n = getattr(self, '_base_normal', None)
-            if n is None: self.finish_pick(); return
-            if self._normal_flipped: n = -n
+            p1, p2, p3 = pts
+            n = np.cross(p2 - p1, p3 - p1)
+            n_len = np.linalg.norm(n)
+            if n_len < 1e-9: self.finish_pick(); return
+            n /= n_len
+            if n[1] < 0: n = -n
             target = np.array([0.0, 1.0, 0.0])
             axis = np.cross(n, target)
             axis_len = np.linalg.norm(axis)
