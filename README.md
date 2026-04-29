@@ -37,5 +37,3 @@ SOR - [Statistical  Outlier Removal](https://www.google.com/search?sourceid=chro
 
 <img width="1014" height="842" alt="image" src="https://github.com/user-attachments/assets/7fda29b3-6ffd-4568-8d66-84d3de8c8ce8" />
 
-<img width="1008" height="846" alt="image" src="https://github.com/user-attachments/assets/9cb96cdf-66dd-48ae-8629-292101760a1b" />
-
