@@ -31,11 +31,11 @@ Aggressive:    k=10  & nSigma= 1.0
 
 SOR - [Statistical  Outlier Removal](https://www.google.com/search?sourceid=chrome&aep=42&source=chrome.crn.rb&udm=50&q=SOR+-+Statistical+Outlier+Removal&mstk=AUtExfCaZiZh6kMy4e6evvU3lqDW4R3FYdttLDTlanyoAMulrRJhh9AqQSSl9jfsLJSzNHBCa8I1cKZxxg29LpBky17W-a0kx1ORmBKypXPY6_sTIWx1aIAn1c2HsU5QYGsJ-39OPSlmXzdsnFwTzuTOSqWI6qgOHOiBepAN8z2F3Wmfna0oeGX60Lpbmy2hsGd626Db-_ERzqGVTMWtI6-ahLJ1PYIcNXXE2vx7bqv0WOtW9Z81EACduLZGLs2PM-fhbExsoXEPGZ7L-trVEIVlQiMVKObm-98aayM&csuir=1&mtid=KKblaavcKY2KnesPwdWb8Qc)  - There two parts to the Plugin:   
 
-1) Run SOR on an existing 3dGS PLY file  - the code is currently 'attached' to the bottom of  the "Rendering"  tab.  I have coded the process to ONLY split: so you get to Isolate and inspect before deleting. This means you can crop etc on the outliers & then merge the model-splits back into one single model.  When 'merging' you can enter the name you want in the input box.  If you have multiple models in the Scene you can 'isolate' only those you want to work with simply by changing the visibility - SOR will only process the visible ones.  I'm not sure what the max count capacity is  - I'm only on a Laptop with an 8GB GPU  &  ~5M starts to turn it into a toaster :hotsprings: 
+1) Run SOR on an existing 3dGS PLY file  - the code is currently 'attached' to the bottom of  the "Rendering"  tab.  I have coded the process to ONLY split: so you get to Isolate and inspect before deleting. This means you can crop etc on the outliers & then merge the model-splits back into one single model.  When 'merging' you can enter the name you want in the input box.  If you have multiple models in the Scene you can 'isolate' only those you want to work with simply by changing the visibility - SOR will only process the visible ones.  I'm not sure what the max count capacity is.
 
 2A) COLMAP Points3D.txt/bin editor: This is appended to the bottom of the "Training" Tab and allows pre-processing of the bin/txt point files - there are no graphics . Culling uses the same SOR as above & cropping is on an AABB system or sphere.  Before cropping you can interrogate the file (sphere sample given) - This doesn't prefill in the inputs though. After crop or crop/sor it will save to bin/txt file & a bak file is made.
 
-2B) [COLMAP GUI editor](https://github.com/bgofish/SOR_Plugin/wiki) 
+2B) [Edit COLMAP (GUI editor)](https://github.com/bgofish/SOR_Plugin/wiki)  This is appended to the bottom of the "Training" Tab (Upper) - Allows for scale/rotation/translation & cropping but no SOR.
 
 <img width="1014" height="842" alt="image" src="https://github.com/user-attachments/assets/7fda29b3-6ffd-4568-8d66-84d3de8c8ce8" />
 
