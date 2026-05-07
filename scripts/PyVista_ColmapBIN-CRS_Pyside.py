@@ -1,4 +1,4 @@
-# "LichtFeld Studio | COLMAP Point Editor v0.2.0"
+# "LichtFeld Studio | COLMAP Point Editor v0.2.1"
 #================================================
 import sys, os, struct, json, subprocess
 import numpy as np
@@ -14,6 +14,66 @@ import vtk
 
 vtk.vtkObject.GlobalWarningDisplayOff()
 pv.global_theme.multi_samples = 0
+
+# --- Session guard via named mutex (Win32) or module-level flag (other platforms) ---
+# The mutex is owned by the first process to create it and released automatically
+# by the OS when that process exits — no stale state possible.
+import tempfile
+
+_MUTEX_NAME   = "LichtFeld_COLMAPEditor_SessionMutex"
+_mutex_handle = None   # holds the Win32 mutex handle for the lifetime of this process
+
+def _session_already_launched() -> bool:
+    global _mutex_handle
+    if sys.platform != "win32":
+        # Non-Windows: fall back to a module-level flag (good enough for one session)
+        return _mutex_handle is not None
+
+    import ctypes
+    ERROR_ALREADY_EXISTS = 183
+    handle = ctypes.windll.kernel32.CreateMutexW(None, True, _MUTEX_NAME)
+    if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        # Mutex already owned by another (or same) process this session
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    # We own the mutex — store handle so it stays alive (and locked) for this process
+    _mutex_handle = handle
+    return False
+
+# Hide the PowerShell console window on Win32
+_SUBPROCESS_FLAGS = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
+
+def _notify_already_running() -> None:
+    """Show a Windows balloon notification warning that the editor is already open.
+    Uses the Win32 NotifyIcon API via System.Windows.Forms (no extra packages).
+    Silently skipped on non-Win32 platforms.
+    """
+    if sys.platform != "win32":
+        return
+    title_ps   = "LichtFeld Studio - COLMAP Editor"
+    message_ps = "COLMAP Editor has already been run this session.  Please close and reopen LichtFeld Studio to start a new session."
+    title_ps   = title_ps.replace("'", "\u2019")
+    message_ps = message_ps.replace("'", "\u2019")
+    ps_script = f"""
+Add-Type -AssemblyName System.Windows.Forms
+$notify = New-Object System.Windows.Forms.NotifyIcon
+$notify.Icon = [System.Drawing.SystemIcons]::Warning
+$notify.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Warning
+$notify.BalloonTipTitle = '{title_ps}'
+$notify.BalloonTipText  = '{message_ps}'
+$notify.Visible = $true
+$notify.ShowBalloonTip(8000)
+Start-Sleep -Milliseconds 9000
+$notify.Dispose()
+"""
+    try:
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
+            creationflags=_SUBPROCESS_FLAGS,
+        )
+    except Exception:
+        pass
 
 # --- HELPERS ---
 class CustomSlider(QSlider):
@@ -243,10 +303,10 @@ class COLMAPExplorer(QMainWindow):
         T_d = np.array([self.srt_ctrl['TransX'].value(),
                         self.srt_ctrl['TransY'].value(),
                         self.srt_ctrl['TransZ'].value()])
-        # Display space has Y negated: P_display = F @ P_colmap, F = diag(1,-1,1)
+        # Display space has X and Y negated: P_display = F @ P_colmap, F = diag(-1,-1,1)
         # A display-space rotation R_d corresponds to F @ R_d @ F in COLMAP space.
         # Translation is purely additive in display space, so T_colmap = F @ T_d.
-        F = np.diag([1.0, -1.0, 1.0])
+        F = np.diag([-1.0, -1.0, 1.0])
         return S, F @ R_d @ F, F @ T_d
         S, R = self.srt_ctrl['Scale'].value(), Rot.from_euler('xyz', [self.srt_ctrl['RotX'].value(), self.srt_ctrl['RotY'].value(), self.srt_ctrl['RotZ'].value()], degrees=True).as_matrix()
         m = np.eye(4); m[:3,:3] = R * S; m[:3,3] = [self.srt_ctrl['TransX'].value(), self.srt_ctrl['TransY'].value(), self.srt_ctrl['TransZ'].value()]
@@ -317,7 +377,7 @@ class COLMAPExplorer(QMainWindow):
         xmin, xmax, ymin, ymax, zmin, zmax = self.current_crop
         def _in_crop(p):
             x, y, z = p['xyz']           # COLMAP space
-            dx, dy, dz = x, -y, z       # display space (Y flipped)
+            dx, dy, dz = -x, -y, z      # display space (X and Y flipped)
             return (xmin <= dx <= xmax and
                     ymin <= dy <= ymax and
                     zmin <= dz <= zmax)
@@ -569,7 +629,7 @@ class COLMAPExplorer(QMainWindow):
                 "No 3D points found in the selected folder.\n"
                 "Make sure it contains points3D.bin or points3D.txt.")
             return
-        pts = np.vstack([v['xyz'] * [1, -1, 1] for v in self.proj.points3D.values()]).astype(np.float32)
+        pts = np.vstack([v['xyz'] * [-1, -1, 1] for v in self.proj.points3D.values()]).astype(np.float32)
         rgbs = np.vstack([v['rgb'] for v in self.proj.points3D.values()]).astype(np.uint8)
         self.cloud_poly = pv.PolyData(pts); self.cloud_poly.point_data["rgb"] = rgbs
         self.radio_bin.setChecked(self.proj.is_bin)
@@ -581,7 +641,7 @@ class COLMAPExplorer(QMainWindow):
         self.plotter.remove_actor("origin")
         if show and self.cloud_poly:
             b = np.array(self.cloud_poly.bounds); al = (b[1]-b[0]) * 0.3
-            pts = np.array([[0,0,0], [al,0,0], [0,al,0], [0,0,al]], float)
+            pts = np.array([[0,0,0], [-al,0,0], [0,al,0], [0,0,-al]], float)
             o = pv.PolyData(pts, lines=np.array([2,0,1, 2,0,2, 2,0,3]))
             o.cell_data["colors"] = np.array([[255,0,0],[0,255,0],[0,0,255]], dtype=np.uint8)
             self.plotter.add_mesh(o, name="origin", scalars="colors", rgb=True, line_width=5)
@@ -709,12 +769,63 @@ class COLMAPExplorer(QMainWindow):
         pos, foc, up = presets[idx]
         self.plotter.camera_position = [pos, foc, up]; self.plotter.reset_camera()
 
-    def closeEvent(self, event): self.plotter.close(); self.hist_plotter.close(); event.accept()
+    def closeEvent(self, event):
+        for p in (self.plotter, self.hist_plotter):
+            try:
+                rw = p.render_window
+                if rw is not None:
+                    rw.Finalize()
+            except Exception:
+                pass
+            try:
+                p.close()
+            except Exception:
+                pass
+        # Allow a fresh launch after a proper close
+        app = QApplication.instance()
+        if app is not None and getattr(app, '_lichtfeld_window', None) is self:
+            app._lichtfeld_window = None
+        event.accept()
+
+def _make_splash(app):
+    """Build and show a loading splash. Returns the QSplashScreen, or None on failure."""
+    try:
+        from PySide6.QtWidgets import QSplashScreen
+        from PySide6.QtGui import QPixmap, QColor, QFont, QPainter
+        splash_pix = QPixmap(540, 120)
+        splash_pix.fill(QColor("#1a1a2e"))
+        painter = QPainter(splash_pix)
+        painter.setPen(QColor("#e0e0e0"))
+        painter.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        painter.drawText(0, 0, 540, 60, Qt.AlignCenter,
+                         "LichtFeld Studio  |  COLMAP Point Editor")
+        painter.setPen(QColor("#aaaaaa"))
+        painter.setFont(QFont("Segoe UI", 10))
+        painter.drawText(0, 52, 540, 50, Qt.AlignCenter,
+                         "COLMAP Editor loading — this may take a minute\u2026")
+        painter.end()
+        splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
+        splash.show()
+        app.processEvents()
+        return splash
+    except Exception:
+        return None
 
 def _run():
     app = QApplication.instance() or QApplication(sys.argv)
+
+    if _session_already_launched():
+        _notify_already_running()
+        return
+
+    splash = _make_splash(app)
+
     ex = COLMAPExplorer()
+
+    if splash is not None:
+        splash.finish(ex)
     ex.show()
+
     if not hasattr(app, '_lichtfeld_running'):
         app._lichtfeld_running = True
         sys.exit(app.exec())
