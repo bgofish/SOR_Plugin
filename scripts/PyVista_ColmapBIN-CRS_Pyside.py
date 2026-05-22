@@ -1,14 +1,44 @@
-# "LichtFeld Studio | COLMAP Point Editor v0.2.1"
+# COLMAP Point Editor v0.2.1
 #================================================
 import sys, os, struct, json, subprocess
 import numpy as np
+
+# QApplication must exist before any Qt widgets are created.
+# Import only the minimal Qt surface needed for the splash first —
+# the heavy libs (pyvista, vtk, scipy) are imported AFTER the splash shows.
+from PySide6.QtWidgets import (QApplication, QSplashScreen, QMainWindow, QVBoxLayout, QHBoxLayout,
+                              QPushButton, QWidget, QFileDialog, QSlider, QLabel, QLineEdit,
+                              QComboBox, QGroupBox, QDoubleSpinBox, QRadioButton, QGridLayout, QButtonGroup)
+from PySide6.QtGui import QKeySequence, QShortcut, QPixmap, QColor, QFont, QPainter
+from PySide6.QtCore import Qt
+_app = QApplication.instance() or QApplication(sys.argv)
+
+# ── Show splash immediately, before any heavy imports ────────────────────────
+def _show_splash():
+    try:
+        pix = QPixmap(540, 120)
+        pix.fill(QColor("#1a1a2e"))
+        p = QPainter(pix)
+        p.setPen(QColor("#00d4ff"))
+        p.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        p.drawText(pix.rect(), Qt.AlignCenter, "COLMAP Point Editor")
+        p.setPen(QColor("#aaaaaa"))
+        p.setFont(QFont("Segoe UI", 9))
+        from PySide6.QtCore import QRect
+        p.drawText(QRect(0, 75, 540, 35), Qt.AlignCenter, "Loading — this may take a moment…")
+        p.end()
+        splash = QSplashScreen(pix, Qt.WindowStaysOnTopHint)
+        splash.show()
+        _app.processEvents()   # force the splash to paint immediately
+        return splash
+    except Exception:
+        return None
+
+_splash = _show_splash()
+
+# ── Heavy imports (slow — VTK/PyVista/SciPy) ─────────────────────────────────
 import pyvista as pv
 from pyvistaqt import QtInteractor
-from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
-                              QPushButton, QWidget, QFileDialog, QSlider, QLabel,
-                              QComboBox, QGroupBox, QDoubleSpinBox, QRadioButton, QGridLayout, QButtonGroup)
-from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtCore import Qt
 from scipy.spatial.transform import Rotation as Rot
 import vtk
 
@@ -20,7 +50,7 @@ pv.global_theme.multi_samples = 0
 # by the OS when that process exits — no stale state possible.
 import tempfile
 
-_MUTEX_NAME   = "LichtFeld_COLMAPEditor_SessionMutex"
+_MUTEX_NAME   = "COLMAPEditor_SessionMutex"
 _mutex_handle = None   # holds the Win32 mutex handle for the lifetime of this process
 
 def _session_already_launched() -> bool:
@@ -51,8 +81,8 @@ def _notify_already_running() -> None:
     """
     if sys.platform != "win32":
         return
-    title_ps   = "LichtFeld Studio - COLMAP Editor"
-    message_ps = "COLMAP Editor has already been run this session.  Please close and reopen LichtFeld Studio to start a new session."
+    title_ps   = "COLMAP Point Editor"
+    message_ps = "COLMAP Editor is already open. Please close the existing window before opening a new one."
     title_ps   = title_ps.replace("'", "\u2019")
     message_ps = message_ps.replace("'", "\u2019")
     ps_script = f"""
@@ -195,10 +225,11 @@ class COLMAPProject:
 class COLMAPExplorer(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LichtFeld Studio | COLMAP Point Editor v0.2.0")
+        self.setWindowTitle("COLMAP Point Editor v0.2.0")
         self.resize(1750, 1050); self.proj, self.cloud_poly = None, None
         self.bounds = [0.0]*6; self.current_crop = [0.0]*6; self.bins = None
         self.picked_pts, self.pick_mode = [], None
+        self._culled_ids = set()   # image IDs removed by cull
         _script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in dir() else os.getcwd()
         self.settings_file = os.path.join(_script_dir, "PyVista_Colmap_settings.json")
 
@@ -240,7 +271,13 @@ class COLMAPExplorer(QMainWindow):
         v_v.addLayout(grid)
         self.spin_fov = QDoubleSpinBox(); self.spin_fov.setRange(10, 120); self.spin_fov.setValue(45)
         self.spin_fov.valueChanged.connect(self.update_preview)
-        v_v.addWidget(QLabel("FOV:")); v_v.addWidget(self.spin_fov)
+        fov_row = QHBoxLayout()
+        fov_row.addWidget(QLabel("FOV:")); fov_row.addWidget(self.spin_fov)
+        self.btn_ortho = QPushButton("ORTHO"); self.btn_ortho.setCheckable(True); self.btn_ortho.setChecked(False)
+        self.btn_ortho.setStyleSheet("QPushButton:checked { background-color: #1e90ff; color: white; font-weight: bold; }")
+        self.btn_ortho.toggled.connect(self._toggle_ortho)
+        fov_row.addWidget(self.btn_ortho)
+        v_v.addLayout(fov_row)
         
         self.pick_btn_map = {}
         for t, m in [("Floor (3Pt)", 'plane'), ("Y-Align (2Pt)", 'align'), ("XYZ Origin", 'xyz_origin'), ("XZ Origin", 'xz_origin')]:
@@ -262,16 +299,63 @@ class COLMAPExplorer(QMainWindow):
         self.spin_step = QDoubleSpinBox(); self.spin_step.setRange(0.001, 1.0); self.spin_step.setValue(0.02)
         self.spin_step.valueChanged.connect(self.update_step_sizes); srt_v.addWidget(QLabel("Step Size:")); srt_v.addWidget(self.spin_step); srt_grp.setLayout(srt_v); sidebar.addWidget(srt_grp)
 
-        # VISUALS
+        # VISUALS (points only)
         t_grp = QGroupBox("Visuals"); t_v = QVBoxLayout()
-        self.btn_origin_vis = QPushButton("[Origin Axis]"); self.btn_origin_vis.setCheckable(True); self.btn_origin_vis.setChecked(True); self.btn_origin_vis.toggled.connect(self.update_preview); t_v.addWidget(self.btn_origin_vis)
-        self.sld_pts = QSlider(Qt.Horizontal); self.sld_pts.setRange(1, 15); self.sld_pts.setValue(3); self.sld_pts.valueChanged.connect(self.update_preview); t_v.addWidget(QLabel("Point Size:")); t_v.addWidget(self.sld_pts)
+        tog_row = QHBoxLayout()
+        self.btn_origin_vis = QPushButton("[Axis]"); self.btn_origin_vis.setCheckable(True); self.btn_origin_vis.setChecked(True); self.btn_origin_vis.toggled.connect(self.update_preview)
+        self.btn_cam_vis = QPushButton("[Cameras]"); self.btn_cam_vis.setCheckable(True); self.btn_cam_vis.setChecked(False); self.btn_cam_vis.toggled.connect(self.update_preview)
+        tog_row.addWidget(self.btn_origin_vis); tog_row.addWidget(self.btn_cam_vis)
+        t_v.addLayout(tog_row)
+        pts_row = QHBoxLayout()
+        self.sld_pts = QSlider(Qt.Horizontal); self.sld_pts.setRange(1, 15); self.sld_pts.setValue(3); self.sld_pts.valueChanged.connect(self.update_preview)
+        pts_row.addWidget(QLabel("Pt Size:")); pts_row.addWidget(self.sld_pts)
+        cam_sz_row = QHBoxLayout()
+        self.sld_cam_size = QSlider(Qt.Horizontal); self.sld_cam_size.setRange(1, 200); self.sld_cam_size.setValue(20); self.sld_cam_size.valueChanged.connect(self.update_preview)
+        cam_sz_row.addWidget(QLabel("Cam Size:")); cam_sz_row.addWidget(self.sld_cam_size)
+        t_v.addLayout(pts_row); t_v.addLayout(cam_sz_row)
         self.combo_color = QComboBox(); self.combo_color.addItems(["RGB", "Elevation", "Cyan"]); self.combo_color.currentIndexChanged.connect(self.update_preview); t_v.addWidget(self.combo_color)
-        t_grp.setLayout(t_v); sidebar.addWidget(t_grp); sidebar.addStretch(); main_layout.addLayout(sidebar, 1)
+        t_grp.setLayout(t_v); sidebar.addWidget(t_grp)
+
+        # CAMERAS — cull controls in their own group
+        cam_grp = QGroupBox("Camera Culling"); cam_v = QVBoxLayout()
+
+        # Random % cull — slider + buttons on one row
+        cull_row = QHBoxLayout()
+        self.sld_cull = QSlider(Qt.Horizontal); self.sld_cull.setRange(5, 75); self.sld_cull.setValue(20)
+        self.lbl_cull = QLabel("Cull 20%"); self.lbl_cull.setFixedWidth(58)
+        self.sld_cull.valueChanged.connect(lambda v: self.lbl_cull.setText(f"Cull {v}%"))
+        btn_cull_apply = QPushButton("Rnd Roll"); btn_cull_apply.clicked.connect(self.roll_cull)
+        btn_cull_clear = QPushButton("Clear All"); btn_cull_clear.clicked.connect(self.clear_cull)
+        cull_row.addWidget(self.lbl_cull); cull_row.addWidget(self.sld_cull); cull_row.addWidget(btn_cull_apply); cull_row.addWidget(btn_cull_clear)
+        cam_v.addLayout(cull_row)
+
+        # Name-based cull
+        name_row = QHBoxLayout()
+        self.txt_cull_name = QLineEdit(); self.txt_cull_name.setPlaceholderText("*back*   012345   012340-012350")
+        btn_cull_name = QPushButton("Cull Match"); btn_cull_name.clicked.connect(self.cull_by_name)
+        name_row.addWidget(self.txt_cull_name); name_row.addWidget(btn_cull_name)
+        cam_v.addLayout(name_row)
+        self.lbl_cull_name_result = QLabel("")
+        cam_v.addWidget(self.lbl_cull_name_result)
+
+        # Nth / odd / even cull — all on one row
+        nth_row = QHBoxLayout()
+        self.spin_nth = QDoubleSpinBox()
+        self.spin_nth.setRange(2, 100); self.spin_nth.setDecimals(0); self.spin_nth.setValue(2); self.spin_nth.setFixedWidth(58)
+        btn_nth  = QPushButton("Every Nth"); btn_nth.clicked.connect(self.cull_nth)
+        btn_odd  = QPushButton("Odd");       btn_odd.clicked.connect(self.cull_odd)
+        btn_even = QPushButton("Even");      btn_even.clicked.connect(self.cull_even)
+        nth_row.addWidget(self.spin_nth); nth_row.addWidget(btn_nth); nth_row.addWidget(btn_odd); nth_row.addWidget(btn_even)
+        cam_v.addLayout(nth_row)
+        self.lbl_nth_result = QLabel("")
+        cam_v.addWidget(self.lbl_nth_result)
+        cam_grp.setLayout(cam_v); sidebar.addWidget(cam_grp)
+        sidebar.addStretch(); main_layout.addLayout(sidebar, 1)
 
         # VIEWPORT & CROP
-        content = QVBoxLayout(); self.plotter = QtInteractor(self); self.hist_plotter = QtInteractor(self); self.hist_plotter.setMaximumHeight(160)
-        content.addWidget(self.plotter.interactor, 6); content.addWidget(self.hist_plotter.interactor, 2)
+        content = QVBoxLayout()
+        self.plotter = QtInteractor(None); self.hist_plotter = QtInteractor(None); self.hist_plotter.setMaximumHeight(160)
+        content.addWidget(self.plotter, 6); content.addWidget(self.hist_plotter, 2)
         c_grp = QGroupBox("Cropping"); c_v = QVBoxLayout(); row = QHBoxLayout()
         self.axis_sel = QComboBox(); self.axis_sel.addItems(["X Axis", "Y Axis", "Z Axis"]); self.axis_sel.setCurrentIndex(1); self.axis_sel.currentIndexChanged.connect(self.sync_crop_ui)
         btn99, btn95 = QPushButton("Auto99"), QPushButton("Auto95")
@@ -312,6 +396,194 @@ class COLMAPExplorer(QMainWindow):
         m = np.eye(4); m[:3,:3] = R * S; m[:3,3] = [self.srt_ctrl['TransX'].value(), self.srt_ctrl['TransY'].value(), self.srt_ctrl['TransZ'].value()]
         return m
 
+    def _make_frustum(self, C, R_cw, scale, aspect=1.333, fov_deg=60.0):
+        """
+        Build a camera frustum mesh in display space.
+
+        C      : camera centre in display space (3,)
+        R_cw   : rotation matrix camera-from-world in display space (3,3)
+              (columns are the world axes expressed in camera space)
+        scale  : half-depth of the frustum
+        Returns a pv.PolyData wireframe.
+        """
+        # Camera axes in world/display space: columns of R_cw.T
+        R_wc = R_cw.T          # world-from-camera
+        forward = R_wc[:, 2]   # +Z in camera space = optical axis
+        right   = R_wc[:, 0]   # +X
+        up      = R_wc[:, 1]   # +Y  (will negate for frustum corners so they fan out)
+
+        half_h = scale * np.tan(np.radians(fov_deg / 2.0))
+        half_w = half_h * aspect
+        depth  = scale
+
+        # Four corners of the far plane, tip at C
+        tip = C
+        tl = C + depth * forward - half_w * right + half_h * up
+        tr = C + depth * forward + half_w * right + half_h * up
+        bl = C + depth * forward - half_w * right - half_h * up
+        br = C + depth * forward + half_w * right - half_h * up
+
+        pts = np.array([tip, tl, tr, br, bl], dtype=np.float32)
+
+        # Lines: 4 edges from tip + 4 edges of the rectangle
+        lines = np.array([
+            2, 0, 1,
+            2, 0, 2,
+            2, 0, 3,
+            2, 0, 4,
+            2, 1, 2,
+            2, 2, 3,
+            2, 3, 4,
+            2, 4, 1,
+        ])
+        mesh = pv.PolyData()
+        mesh.points = pts
+        mesh.lines  = lines
+        return mesh
+
+    def _sorted_image_ids(self):
+        """Return image IDs sorted by filename — consistent basis for nth/odd/even."""
+        if not self.proj or not self.proj.images:
+            return []
+        return [iid for iid, _ in sorted(self.proj.images.items(),
+                                          key=lambda kv: kv[1]['name'])]
+
+    def cull_nth(self):
+        """Cull every Nth image (0-based index: 0, N, 2N, …)."""
+        n = max(2, int(self.spin_nth.value()))
+        ids = self._sorted_image_ids()
+        matched = {iid for i, iid in enumerate(ids) if i % n == 0}
+        self._culled_ids |= matched
+        self.lbl_nth_result.setText(f"Every {n}th: {len(matched)} culled  ({len(self._culled_ids)} total)")
+        self.btn_cam_vis.setChecked(True); self.update_preview()
+
+    def cull_odd(self):
+        """Cull images at odd positions (1-based: 1, 3, 5, …)."""
+        ids = self._sorted_image_ids()
+        matched = {iid for i, iid in enumerate(ids) if i % 2 == 1}
+        self._culled_ids |= matched
+        self.lbl_nth_result.setText(f"Odd: {len(matched)} culled  ({len(self._culled_ids)} total)")
+        self.btn_cam_vis.setChecked(True); self.update_preview()
+
+    def cull_even(self):
+        """Cull images at even positions (1-based: 2, 4, 6, …)."""
+        ids = self._sorted_image_ids()
+        matched = {iid for i, iid in enumerate(ids) if i % 2 == 0}
+        self._culled_ids |= matched
+        self.lbl_nth_result.setText(f"Even: {len(matched)} culled  ({len(self._culled_ids)} total)")
+        self.btn_cam_vis.setChecked(True); self.update_preview()
+
+    def cull_by_name(self):
+        """Cull cameras whose filename matches a wildcard, suffix number, range, or substring."""
+        import fnmatch, re
+        if not self.proj or not self.proj.images:
+            return
+        pattern = self.txt_cull_name.text().strip()
+        if not pattern:
+            self.lbl_cull_name_result.setText("Enter a pattern first.")
+            return
+
+        # Detect numeric range  e.g.  012340-012350
+        range_match = re.fullmatch(r'(\d+)\s*-\s*(\d+)', pattern)
+
+        matched = set()
+        for iid, img in self.proj.images.items():
+            name = img['name']
+            stem = os.path.splitext(name)[0]
+            after_us = stem.rsplit('_', 1)[-1]   # numeric suffix after last '_'
+
+            if range_match:
+                # Numeric range — compare as integers so 012340 == 12340
+                lo, hi = int(range_match.group(1)), int(range_match.group(2))
+                if re.fullmatch(r'\d+', after_us) and lo <= int(after_us) <= hi:
+                    matched.add(iid)
+
+            elif '*' in pattern or '?' in pattern:
+                if fnmatch.fnmatch(name.lower(), pattern.lower()) or \
+                   fnmatch.fnmatch(stem.lower(), pattern.lower()):
+                    matched.add(iid)
+
+            elif re.fullmatch(r'\d+', pattern):
+                # Exact numeric suffix
+                if after_us == pattern or int(after_us or -1) == int(pattern):
+                    matched.add(iid)
+
+            else:
+                # Plain substring
+                if pattern.lower() in name.lower():
+                    matched.add(iid)
+
+        self._culled_ids |= matched
+        n = len(matched)
+        total_culled = len(self._culled_ids)
+        self.lbl_cull_name_result.setText(
+            f"{n} matched, {total_culled} total culled" if n else "No matches found."
+        )
+        if n:
+            self.btn_cam_vis.setChecked(True)
+            self.update_preview()
+
+    def roll_cull(self):
+        """Randomly select a percentage of cameras to cull."""
+        if not self.proj or not self.proj.images:
+            return
+        import random
+        pct   = self.sld_cull.value() / 100.0
+        ids   = list(self.proj.images.keys())
+        n     = max(1, int(round(len(ids) * pct)))
+        self._culled_ids = set(random.sample(ids, n))
+        kept  = len(ids) - len(self._culled_ids)
+        self.lbl_cull.setText(f"Cull {self.sld_cull.value()}%  ({len(self._culled_ids)} removed, {kept} kept)")
+        self.btn_cam_vis.setChecked(True)
+        self.update_preview()
+
+    def clear_cull(self):
+        """Restore all culled cameras."""
+        self._culled_ids = set()
+        self.lbl_cull.setText(f"Cull {self.sld_cull.value()}%")
+        self.update_preview()
+
+    def draw_cameras(self):
+        """Render all camera frustums into the plotter — culled ones in red."""
+        self.plotter.remove_actor("cameras_kept")
+        self.plotter.remove_actor("cameras_culled")
+        if not self.btn_cam_vis.isChecked() or not self.proj or not self.proj.images:
+            return
+
+        scale  = self.sld_cam_size.value() * 0.01
+        M      = self.get_mat()
+        R_srt  = M[:3, :3]
+        T_srt  = M[:3,  3]
+        F      = np.diag([-1.0, -1.0, 1.0])
+
+        kept_blocks   = pv.MultiBlock()
+        culled_blocks = pv.MultiBlock()
+
+        for iid, img in self.proj.images.items():
+            R_cw_col  = qvec2rotmat(img['qvec'])
+            t_cw_col  = np.array(img['tvec'], float)
+            C_col     = -R_cw_col.T @ t_cw_col
+            C_disp    = R_srt @ (F @ C_col) + T_srt
+            R_cw_disp = R_cw_col @ F.T @ R_srt.T
+            mesh      = self._make_frustum(C_disp, R_cw_disp, scale)
+            if iid in self._culled_ids:
+                culled_blocks.append(mesh)
+            else:
+                kept_blocks.append(mesh)
+
+        if len(kept_blocks):
+            self.plotter.add_mesh(kept_blocks.combine(), name="cameras_kept",
+                                  color="yellow", line_width=1, reset_camera=False)
+        if len(culled_blocks):
+            self.plotter.add_mesh(culled_blocks.combine(), name="cameras_culled",
+                                  color="red", line_width=1, reset_camera=False)
+
+    def _toggle_ortho(self, checked: bool):
+        self.plotter.camera.parallel_projection = checked
+        self.btn_ortho.setText("ORTHO" if checked else "PERSP")
+        self.spin_fov.setEnabled(not checked)
+        self.plotter.render()
+
     def update_preview(self):
         if not self.cloud_poly: return
         self.plotter.camera.view_angle = self.spin_fov.value()
@@ -325,6 +597,7 @@ class COLMAPExplorer(QMainWindow):
             elif cm == 2: self.plotter.add_mesh(active, name="cloud", color="cyan", reset_camera=False, point_size=self.sld_pts.value())
             else: self.plotter.add_mesh(active, name="cloud", scalars="rgb", rgb=True, reset_camera=False, point_size=self.sld_pts.value())
         else: self.plotter.remove_actor("cloud")
+        self.draw_cameras()
         self.update_histogram(temp.points); self.toggle_origin(self.btn_origin_vis.isChecked()); self.plotter.render()
 
     def update_histogram(self, pts):
@@ -387,6 +660,12 @@ class COLMAPExplorer(QMainWindow):
         cropped_pts = len(cropped_points)
         print(f"[export] Crop: {cropped_pts:,} / {total_pts:,} points")
 
+        # Filter culled cameras
+        export_images  = {iid: img for iid, img in self.proj.images.items() if iid not in self._culled_ids}
+        export_cam_ids = {img['cam_id'] for img in export_images.values()}
+        export_cameras = {cid: cam for cid, cam in self.proj.cameras.items() if cid in export_cam_ids}
+        print(f"[export] Cameras: {len(export_images)} / {len(self.proj.images)} images  ({len(self._culled_ids)} culled)")
+
         def _track_str(tracks):
             s = ""
             if isinstance(tracks, bytes):
@@ -427,8 +706,8 @@ class COLMAPExplorer(QMainWindow):
 
             # --- images.bin ---
             with open(os.path.join(f, "images.bin"), "wb") as file:
-                file.write(struct.pack("<Q", len(self.proj.images)))
-                for iid, img in self.proj.images.items():
+                file.write(struct.pack("<Q", len(export_images)))
+                for iid, img in export_images.items():
                     q_new, t_new = _transform_image(img)
                     file.write(struct.pack("<I",    iid))
                     file.write(struct.pack("<dddd", *q_new))
@@ -444,8 +723,8 @@ class COLMAPExplorer(QMainWindow):
 
             # --- cameras.bin ---
             with open(os.path.join(f, "cameras.bin"), "wb") as file:
-                file.write(struct.pack("<Q", len(self.proj.cameras)))
-                for cid, cam in self.proj.cameras.items():
+                file.write(struct.pack("<Q", len(export_cameras)))
+                for cid, cam in export_cameras.items():
                     file.write(struct.pack("<IiQQ", cid, cam['model'], *cam['hw']))
                     file.write(struct.pack(f"<{len(cam['params'])}d", *cam['params']))
 
@@ -463,8 +742,8 @@ class COLMAPExplorer(QMainWindow):
             with open(os.path.join(f, "images.txt"), "w") as file:
                 file.write("# Image list\n#   IMAGE_ID, QW,QX,QY,QZ, TX,TY,TZ, CAMERA_ID, NAME\n")
                 file.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
-                file.write(f"# Number of images: {len(self.proj.images)}\n")
-                for iid, img in self.proj.images.items():
+                file.write(f"# Number of images: {len(export_images)}\n")
+                for iid, img in export_images.items():
                     q_new, t_new = _transform_image(img)
                     file.write(f"{iid} {q_new[0]:.9f} {q_new[1]:.9f} {q_new[2]:.9f} {q_new[3]:.9f} "
                                f"{t_new[0]:.9f} {t_new[1]:.9f} {t_new[2]:.9f} {img['cam_id']} {img['name']}\n")
@@ -474,8 +753,8 @@ class COLMAPExplorer(QMainWindow):
             with open(os.path.join(f, "cameras.txt"), "w") as file:
                 file.write("# Camera list with one line of data per camera:\n")
                 file.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
-                file.write(f"# Number of cameras: {len(self.proj.cameras)}\n")
-                for cid, cam in self.proj.cameras.items():
+                file.write(f"# Number of cameras: {len(export_cameras)}\n")
+                for cid, cam in export_cameras.items():
                     model_name = MODEL_NAMES.get(cam['model'], f"UNKNOWN_{cam['model']}")
                     params_str = " ".join(f"{p:.6f}" for p in cam['params'])
                     file.write(f"{cid} {model_name} {cam['hw'][0]} {cam['hw'][1]} {params_str}\n")
@@ -624,6 +903,7 @@ class COLMAPExplorer(QMainWindow):
         f = QFileDialog.getExistingDirectory(self, "Select Folder")
         if not f: return
         self.proj = COLMAPProject(); self.proj.load(f)
+        self._culled_ids = set()
         if not self.proj.points3D:
             QMessageBox.warning(self, "Empty Project",
                 "No 3D points found in the selected folder.\n"
@@ -752,7 +1032,14 @@ class COLMAPExplorer(QMainWindow):
         for i in range(3): d = self.cloud_poly.points[:,i]; self.current_crop[2*i], self.current_crop[2*i+1] = float(np.percentile(d, (1-pct)/2*100)), float(np.percentile(d, (1-(1-pct)/2)*100))
         self.sync_crop_ui()
     def reset_crop(self):
-        if self.cloud_poly: self.current_crop = [float(x) for x in self.bounds]; self.sync_crop_ui()
+        if not self.cloud_poly: return
+        transformed = self.cloud_poly.copy().transform(self.get_mat(), inplace=True)
+        pts = transformed.points
+        self.bounds = [float(pts[:,0].min()), float(pts[:,0].max()),
+                       float(pts[:,1].min()), float(pts[:,1].max()),
+                       float(pts[:,2].min()), float(pts[:,2].max())]
+        self.current_crop = list(self.bounds)
+        self.sync_crop_ui()
     def apply_view_preset(self, idx):
         # position, focal_point, view_up
         presets = [
@@ -783,42 +1070,18 @@ class COLMAPExplorer(QMainWindow):
                 pass
         # Allow a fresh launch after a proper close
         app = QApplication.instance()
-        if app is not None and getattr(app, '_lichtfeld_window', None) is self:
-            app._lichtfeld_window = None
+        if app is not None and getattr(app, '_colmap_window', None) is self:
+            app._colmap_window = None
         event.accept()
 
-def _make_splash(app):
-    """Build and show a loading splash. Returns the QSplashScreen, or None on failure."""
-    try:
-        from PySide6.QtWidgets import QSplashScreen
-        from PySide6.QtGui import QPixmap, QColor, QFont, QPainter
-        splash_pix = QPixmap(540, 120)
-        splash_pix.fill(QColor("#1a1a2e"))
-        painter = QPainter(splash_pix)
-        painter.setPen(QColor("#e0e0e0"))
-        painter.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        painter.drawText(0, 0, 540, 60, Qt.AlignCenter,
-                         "LichtFeld Studio  |  COLMAP Point Editor")
-        painter.setPen(QColor("#aaaaaa"))
-        painter.setFont(QFont("Segoe UI", 10))
-        painter.drawText(0, 52, 540, 50, Qt.AlignCenter,
-                         "COLMAP Editor loading — this may take a minute\u2026")
-        painter.end()
-        splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
-        splash.show()
-        app.processEvents()
-        return splash
-    except Exception:
-        return None
-
 def _run():
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = QApplication.instance() or _app
 
     if _session_already_launched():
         _notify_already_running()
         return
 
-    splash = _make_splash(app)
+    splash = _splash   # already showing since module load
 
     ex = COLMAPExplorer()
 
@@ -826,11 +1089,9 @@ def _run():
         splash.finish(ex)
     ex.show()
 
-    if not hasattr(app, '_lichtfeld_running'):
-        app._lichtfeld_running = True
+    if not hasattr(app, '_colmap_running'):
+        app._colmap_running = True
         sys.exit(app.exec())
 
 if __name__ == "__main__":
-    _run()
-else:
     _run()
