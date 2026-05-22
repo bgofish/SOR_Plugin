@@ -33,9 +33,12 @@ SOR - [Statistical  Outlier Removal](https://www.google.com/search?sourceid=chro
 
 1) Run SOR on an existing 3dGS PLY file  - the code is currently 'attached' to the bottom of  the "Rendering"  tab.  I have coded the process to ONLY split: so you get to Isolate and inspect before deleting. This means you can crop etc on the outliers & then merge the model-splits back into one single model.  When 'merging' you can enter the name you want in the input box.  If you have multiple models in the Scene you can 'isolate' only those you want to work with simply by changing the visibility - SOR will only process the visible ones.  I'm not sure what the max count capacity is.
 
+<img width="1014" height="842" alt="image" src="https://github.com/user-attachments/assets/7fda29b3-6ffd-4568-8d66-84d3de8c8ce8" />
+
 2A) COLMAP Points3D.txt/bin editor: This is appended to the bottom of the "Training" Tab and allows pre-processing of the bin/txt point files - there are no graphics . Culling uses the same SOR as above & cropping is on an AABB system or sphere.  Before cropping you can interrogate the file (sphere sample given) - This doesn't prefill in the inputs though. After crop or crop/sor it will save to bin/txt file & a bak file is made.
+
+<img width="680" height="464" alt="image" src="https://github.com/user-attachments/assets/5cb5a1f8-282c-4082-b68f-0aa2a2d574d8" />
 
 2B) [Edit COLMAP (GUI editor)](https://github.com/bgofish/SOR_Plugin/wiki)  This is appended to the bottom of the "Training" Tab (Upper) - Allows for scale/rotation/translation & cropping but no SOR.
 
-<img width="1014" height="842" alt="image" src="https://github.com/user-attachments/assets/7fda29b3-6ffd-4568-8d66-84d3de8c8ce8" />
-
+<img width="2559" height="1599" alt="image" src="https://github.com/user-attachments/assets/1bf31a0f-c6ef-49bd-a9e2-95149c9e41d3" />
