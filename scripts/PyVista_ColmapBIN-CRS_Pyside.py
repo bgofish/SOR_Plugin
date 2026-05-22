@@ -1,4 +1,4 @@
-# COLMAP Point Editor v0.2.1
+# COLMAP Point Editor v0.2.2
 #================================================
 import sys, os, struct, json, subprocess
 import numpy as np
