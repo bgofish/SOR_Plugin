@@ -3,6 +3,7 @@ Based on Code sourced from; [/Dymensium/PointNuker](https://github.com/Dymensium
 UPDATES:
 # **0.2.3**
 <img width="872" height="286" alt="image" src="https://github.com/user-attachments/assets/e41a6848-6d8c-40f8-ac14-02104e85a945" />
+
 The SOR_SP (Sparse Points)  & SOR_3dGS (trained 3dgs) are now in their own tabs as newer versions of LFS doesn't support the 'Parent' Tab system.
 
 With PointNuker-SOR, the Statistical Outlier Removal (SOR) filter is a tool used to "denoise" your 3D Gaussian Splats by identifying points that are too far from their neighbors compared to the average density of the cloud. 
