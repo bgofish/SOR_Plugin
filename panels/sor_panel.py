@@ -1,8 +1,10 @@
 """
 SORPanel — UI panel for Statistical Outlier Removal on loaded 3DGS scenes.
 
-Embeds as a collapsible section inside the Rendering panel. Init point cloud
-pre-processing (SOR + crop on points3D files) lives in COLMAPPanel.
+Top-level panel (SOR_3dGS) — no longer embedded in the Rendering tab, since
+parent = "lfs.rendering" stopped resolving in newer LFS builds. Init point
+cloud pre-processing (SOR + crop on points3D files) lives in COLMAPPanel
+(SOR_SP).
 """
 
 from __future__ import annotations
@@ -22,11 +24,10 @@ class SORPanel(lf.ui.Panel):
     """
 
     id               = "pointnuker_sor.panel"
-    label            = "Statistical Outlier Removal"
-    parent           = "lfs.rendering"
+    label            = "SOR_3dGS"
+    space            = lf.ui.PanelSpace.MAIN_PANEL_TAB
     order            = 300
-    options          = {lf.ui.PanelOption.DEFAULT_CLOSED}
-    poll_dependencies = {lf.ui.PollDependency.SCENE}
+
 
     def __init__(self):
         self._nb_neighbors: int  = _NB_DEFAULT

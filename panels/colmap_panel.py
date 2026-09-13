@@ -1,7 +1,8 @@
 """
 COLMAPPanel — Pre-processing tools for COLMAP init point clouds.
 
-Sits inside the Training tab (parent = lfs.training).
+Top-level panel (SOR_SP) — no longer embedded in the Training tab, since
+parent = "lfs.training" stopped resolving in newer LFS builds.
 Covers:
   - Statistical Outlier Removal on points3D.bin / points3D.txt
   - Axis-aligned bounding-box crop
@@ -41,11 +42,9 @@ class COLMAPPanel(lf.ui.Panel):
     """
 
     id                = "pointnuker_sor.colmap_panel"
-    label             = "COLMAP Tools"
-    parent            = "lfs.training"
+    label             = "SOR_SP"
+    space             = lf.ui.PanelSpace.MAIN_PANEL_TAB
     order             = 50
-    options           = {lf.ui.PanelOption.DEFAULT_CLOSED}
-    poll_dependencies = {lf.ui.PollDependency.SCENE}
 
     # ------------------------------------------------------------------
     def __init__(self):
